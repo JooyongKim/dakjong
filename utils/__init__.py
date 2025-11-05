@@ -2,7 +2,11 @@
 Utility modules for investment strategy signal generators.
 """
 
-from .data_loader import DataLoader
 from .indicators import Indicators
 
-__all__ = ['DataLoader', 'Indicators']
+# DataLoader requires yfinance - import only if needed
+try:
+    from .data_loader import DataLoader
+    __all__ = ['DataLoader', 'Indicators']
+except ImportError:
+    __all__ = ['Indicators']
