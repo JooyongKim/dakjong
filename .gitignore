@@ -47,3 +47,5 @@ test_structure.py
 # OS
 .DS_Store
 Thumbs.db
+charts/
+*.png

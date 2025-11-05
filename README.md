@@ -310,12 +310,69 @@ class MyNewStrategy(BaseStrategy):
         pass
 ```
 
+## 거래 액션 가이드
+
+각 전략의 신호에 따른 구체적인 거래 액션 요약입니다. 자세한 내용은 [TRADING_GUIDE.md](TRADING_GUIDE.md)를 참조하세요.
+
+### Strategy 1: Market Panic Buy
+| 신호 | 거래 액션 |
+|------|-----------|
+| **BUY** | **매수**: SPY 또는 QQQ (포트폴리오의 10-20%)<br>목표 수익률: +10-15%<br>손절: -5% |
+| **NONE** | **대기**: 기존 포지션 유지 또는 관망 |
+
+### Strategy 2: Risk Management
+| 신호 | 거래 액션 |
+|------|-----------|
+| **RISK_OFF** | **매도**: 모든 주식 포지션 청산<br>**매수**: SHY, BIL (안전자산) 또는 100% 현금 |
+| **NONE** | **유지**: 정상 시장 환경, 기존 포지션 유지 |
+
+### Strategy 3: Trend-Based Leverage
+| 신호 | 거래 액션 |
+|------|-----------|
+| **LEVERAGE_ON** | **매수**: SPXL (3배 레버리지 ETF) 또는 SPY에 1.5배 레버리지 적용 |
+| **LEVERAGE_OFF** | **매도**: 레버리지 포지션 청산<br>**전환**: SPY 1배로 전환 또는 현금/SHY |
+
+### Strategy 4: Sector Rotation
+| 신호 | 거래 액션 |
+|------|-----------|
+| **HOLD_SECTORS** | **리밸런싱**: 선정 섹터 매수 (예: XLI, XLC, XLU)<br>제외 섹터 매도<br>월말/분기말 리밸런싱 |
+| **CASH** | **청산**: 모든 섹터 ETF 매도, 100% 현금 또는 SHY 보유 |
+
+### Strategy 5: MACD-V Momentum
+| 신호 | 거래 액션 |
+|------|-----------|
+| **Strong_Up** | **공격적**: 주식 중심 (SPY 50-70%), 강세 자산 배분 |
+| **Weakening_Up** | **유지/축소**: 포지션 유지, 현금 비중 증가 (15-20%) |
+| **Strong_Down** | **방어적**: 주식 청산, 채권/현금 중심 (TLT, GLD 70%+) |
+| **Weakening_Down** | **재진입**: 점진적 주식 재진입 고려 (10-30%) |
+
+### 시각화
+
+각 전략의 지표와 신호를 시각화할 수 있습니다:
+
+```python
+from utils.data_loader import DataLoader
+from strategies import LeverageStrategy
+
+loader = DataLoader(start_date='2023-01-01')
+spy_data = loader.load_market_index('SPY')
+
+strategy = LeverageStrategy()
+strategy.plot(market_data=spy_data, save_path='strategy_chart.png')
+```
+
+모든 전략 시각화 테스트:
+```bash
+python test_visualization.py
+```
+
 ## 주의사항
 
 1. **백테스팅 전용**: 이 코드는 교육 및 연구 목적입니다. 실제 투자에 사용하기 전에 충분한 검증이 필요합니다.
 2. **데이터 한계**: NYSE 광역 데이터는 yfinance에서 제공되지 않으므로 별도 소스가 필요합니다.
 3. **파라미터 최적화**: 각 전략의 파라미터는 시장 상황과 투자 목표에 따라 조정이 필요합니다.
 4. **리스크 관리**: 모든 투자 전략은 적절한 리스크 관리와 함께 사용되어야 합니다.
+5. **전문가 상담**: 실제 투자 전 재무 전문가와 상담하시기 바랍니다.
 
 ## 라이선스
 

@@ -18,6 +18,8 @@ from datetime import datetime, timedelta
 
 from .base_strategy import BaseStrategy
 from utils.indicators import Indicators
+from utils.visualizer import Visualizer
+import matplotlib.pyplot as plt
 
 
 class RiskManagementStrategy(BaseStrategy):
@@ -244,3 +246,107 @@ class RiskManagementStrategy(BaseStrategy):
         self.warning_vix = None
         self.warning_canary = None
         self.clear_history()
+
+    def plot(self, vix_data: pd.DataFrame, market_data: pd.DataFrame, save_path: str = None):
+        """
+        Visualize strategy indicators and signals.
+
+        Args:
+            vix_data: VIX data
+            market_data: Market data
+            save_path: Optional path to save the figure
+        """
+        # Generate signals
+        df = self.generate_signals(vix_data, market_data)
+
+        # Prepare VIX data
+        vix_close = vix_data['Close']
+        if isinstance(vix_close, pd.DataFrame):
+            vix_close = vix_close.iloc[:, 0]
+        vix_std = vix_close.rolling(window=self.vix_std_period).std()
+
+        # Create figure with 3 subplots
+        fig, axes = Visualizer.create_figure(n_subplots=3, figsize=(15, 12))
+
+        # Subplot 1: Price, 52W High, and 200-day SMA
+        ax1 = axes[0]
+        close_series = df['Close']
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+
+        ax1.plot(df.index, close_series, label='SPY Price', color='blue', linewidth=1.5)
+        ax1.plot(df.index, df['High_52W'], label='52-Week High', color='green',
+                linewidth=1.5, linestyle='--', alpha=0.7)
+        ax1.plot(df.index, df['SMA_200'], label='200-day SMA', color='orange',
+                linewidth=2, linestyle='--')
+
+        # Mark RISK_OFF signals
+        risk_off = df[df['Signal'] == 'RISK_OFF']
+        if not risk_off.empty:
+            for date in risk_off.index:
+                price = close_series.loc[date]
+                ax1.plot(date, price, 'v', color='red', markersize=12,
+                        label='RISK OFF' if date == risk_off.index[0] else '', zorder=5)
+
+        # Shade warning periods
+        warning_mask = df['Risk_Level'] == 'WARNING'
+        ax1.fill_between(df.index, close_series.min(), close_series.max(),
+                         where=warning_mask, alpha=0.1, color='yellow', label='Warning Period')
+
+        risk_mask = df['Risk_Level'] == 'RISK_OFF'
+        ax1.fill_between(df.index, close_series.min(), close_series.max(),
+                         where=risk_mask, alpha=0.2, color='red', label='Risk-Off Period')
+
+        ax1.set_title('Risk Management - Price, 52W High, and 200-day SMA', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Price ($)', fontsize=12)
+        ax1.legend(loc='best', fontsize=9)
+        ax1.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax1)
+
+        # Subplot 2: VIX Standard Deviation
+        ax2 = axes[1]
+        ax2.plot(vix_std.index, vix_std, label=f'VIX {self.vix_std_period}D StdDev',
+                color='purple', linewidth=1.5)
+        ax2.axhline(y=self.vix_std_threshold, color='red', linestyle='--',
+                   linewidth=2, label=f'Threshold ({self.vix_std_threshold})')
+
+        # Mark VIX warnings
+        vix_warnings = df[df['Warning_VIX'] == True]
+        if not vix_warnings.empty:
+            for date in vix_warnings.index:
+                if date in vix_std.index:
+                    ax2.plot(date, vix_std.loc[date], 'o', color='red', markersize=6,
+                            alpha=0.5)
+
+        ax2.set_title('VIX Standard Deviation (Low Volatility Warning)', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('VIX StdDev', fontsize=12)
+        ax2.legend(loc='best', fontsize=10)
+        ax2.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax2)
+
+        # Subplot 3: Percentage Drop from 52W High and Days to Drop
+        ax3 = axes[2]
+        pct_drop = df['Pct_Drop'] * 100
+
+        ax3.plot(df.index, pct_drop, label='% Drop from 52W High', color='darkred', linewidth=1.5)
+        ax3.axhline(y=-self.drop_pct * 100, color='red', linestyle='--',
+                   linewidth=2, label=f'{self.drop_pct*100}% Drop Threshold')
+
+        # Mark canary warnings
+        canary_warnings = df[df['Warning_Canary'] == True]
+        if not canary_warnings.empty:
+            for date in canary_warnings.index:
+                ax3.plot(date, pct_drop.loc[date], 'o', color='orange', markersize=6,
+                        alpha=0.5, label='Canary Warning' if date == canary_warnings.index[0] else '')
+
+        ax3.fill_between(df.index, 0, pct_drop, where=(pct_drop < -self.drop_pct * 100),
+                        alpha=0.2, color='red', label='Below Threshold')
+
+        ax3.set_title('Market Decline Speed (Canary Signal)', fontsize=14, fontweight='bold')
+        ax3.set_ylabel('Drop from 52W High (%)', fontsize=12)
+        ax3.set_xlabel('Date', fontsize=12)
+        ax3.legend(loc='best', fontsize=10)
+        ax3.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax3)
+
+        Visualizer.save_or_show(fig, save_path)

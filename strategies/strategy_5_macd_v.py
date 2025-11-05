@@ -14,6 +14,8 @@ from datetime import datetime
 
 from .base_strategy import BaseStrategy
 from utils.indicators import Indicators
+from utils.visualizer import Visualizer
+import matplotlib.pyplot as plt
 
 
 class MACDVStrategy(BaseStrategy):
@@ -285,3 +287,133 @@ class MACDVStrategy(BaseStrategy):
     def reset_state(self):
         """Reset strategy state (for backtesting purposes)."""
         self.clear_history()
+
+    def plot(self, asset_data: Dict[str, pd.DataFrame], save_path: str = None):
+        """
+        Visualize MACD-V indicators and signals for assets.
+
+        Args:
+            asset_data: Dictionary of asset DataFrames
+            save_path: Optional path to save the figure
+        """
+        # Calculate MACD-V for visualization (without generating signals)
+        if 'SPY' not in asset_data:
+            print("SPY data not available for plotting")
+            return
+
+        # Calculate MACD-V for all assets
+        macd_v_results = {}
+
+        for ticker, data in asset_data.items():
+            if data.empty:
+                continue
+
+            # Flatten multi-index columns if present
+            data_copy = data.copy()
+            if isinstance(data_copy.columns, pd.MultiIndex):
+                data_copy.columns = data_copy.columns.get_level_values(0)
+
+            # Extract series
+            high_series = data_copy['High']
+            if isinstance(high_series, pd.DataFrame):
+                high_series = high_series.iloc[:, 0]
+            low_series = data_copy['Low']
+            if isinstance(low_series, pd.DataFrame):
+                low_series = low_series.iloc[:, 0]
+            close_series = data_copy['Close']
+            if isinstance(close_series, pd.DataFrame):
+                close_series = close_series.iloc[:, 0]
+
+            # Calculate MACD-V
+            macd_v = Indicators.macd_v(
+                high=high_series,
+                low=low_series,
+                close=close_series,
+                ema_short=self.ema_short,
+                ema_long=self.ema_long,
+                atr_period=self.atr_period
+            )
+
+            macd_v_results[ticker] = macd_v
+
+        # Calculate SPY market regime
+        spy_df = asset_data['SPY'].copy()
+        if isinstance(spy_df.columns, pd.MultiIndex):
+            spy_df.columns = spy_df.columns.get_level_values(0)
+
+        close_series = spy_df['Close']
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+
+        spy_df['SMA_200'] = Indicators.sma(close_series, self.market_filter_sma)
+        spy_df['Market_Regime'] = 'Bear'
+        spy_df.loc[close_series > spy_df['SMA_200'], 'Market_Regime'] = 'Bull'
+
+        # Create figure with subplots for each asset + 1 for price
+        n_assets = len(macd_v_results)
+        fig, axes = Visualizer.create_figure(n_subplots=n_assets + 1, figsize=(15, 4 * (n_assets + 1)))
+
+        # Subplot 1: SPY Price and 200-day SMA
+        ax_price = axes[0]
+        close_series = spy_df['Close']
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+
+        ax_price.plot(spy_df.index, close_series, label='SPY Price', color='blue', linewidth=1.5)
+        ax_price.plot(spy_df.index, spy_df['SMA_200'], label='200-day SMA',
+                     color='orange', linewidth=2, linestyle='--')
+
+        # Shade bull/bear regimes
+        bull_mask = spy_df['Market_Regime'] == 'Bull'
+        ax_price.fill_between(spy_df.index, close_series.min(), close_series.max(),
+                              where=bull_mask, alpha=0.1, color='green', label='Bull Regime')
+
+        bear_mask = spy_df['Market_Regime'] == 'Bear'
+        ax_price.fill_between(spy_df.index, close_series.min(), close_series.max(),
+                              where=bear_mask, alpha=0.1, color='red', label='Bear Regime')
+
+        ax_price.set_title('Market Regime (SPY vs 200-day SMA)', fontsize=14, fontweight='bold')
+        ax_price.set_ylabel('Price ($)', fontsize=12)
+        ax_price.legend(loc='best', fontsize=10)
+        ax_price.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax_price)
+
+        # Subplots 2+: MACD-V for each asset
+        for idx, (ticker, macd_v) in enumerate(macd_v_results.items()):
+            ax = axes[idx + 1]
+
+            # Plot MACD-V
+            ax.plot(macd_v.index, macd_v, label=f'{ticker} MACD-V', linewidth=1.5)
+
+            # Add threshold lines
+            ax.axhline(y=self.thresholds['Overbought'], color='red', linestyle='--',
+                      linewidth=1, alpha=0.7, label=f"Overbought ({self.thresholds['Overbought']})")
+            ax.axhline(y=self.thresholds['Rallying'], color='orange', linestyle='--',
+                      linewidth=1, alpha=0.5)
+            ax.axhline(y=0, color='black', linestyle='-', linewidth=1.5)
+            ax.axhline(y=self.thresholds['Ranging_Lower'], color='orange', linestyle='--',
+                      linewidth=1, alpha=0.5)
+            ax.axhline(y=self.thresholds['Reversing'], color='red', linestyle='--',
+                      linewidth=1, alpha=0.7, label=f"Oversold ({self.thresholds['Reversing']})")
+
+            # Color-code regions
+            ax.fill_between(macd_v.index, self.thresholds['Overbought'], macd_v,
+                           where=(macd_v > self.thresholds['Overbought']),
+                           alpha=0.2, color='red', label='Overbought')
+            ax.fill_between(macd_v.index, self.thresholds['Rallying'], macd_v,
+                           where=((macd_v > self.thresholds['Rallying']) &
+                                  (macd_v <= self.thresholds['Overbought'])),
+                           alpha=0.2, color='green', label='Rallying')
+            ax.fill_between(macd_v.index, self.thresholds['Reversing'], macd_v,
+                           where=(macd_v < self.thresholds['Reversing']),
+                           alpha=0.2, color='darkred', label='Reversing/Oversold')
+
+            ax.set_title(f'{ticker} - MACD-V Momentum State', fontsize=13, fontweight='bold')
+            ax.set_ylabel('MACD-V Value', fontsize=11)
+            if idx == len(macd_v_results) - 1:
+                ax.set_xlabel('Date', fontsize=12)
+            ax.legend(loc='best', fontsize=9)
+            ax.grid(True, alpha=0.3)
+            Visualizer.format_date_axis(ax)
+
+        Visualizer.save_or_show(fig, save_path)

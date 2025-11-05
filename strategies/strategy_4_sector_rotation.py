@@ -17,6 +17,8 @@ import calendar
 
 from .base_strategy import BaseStrategy
 from utils.indicators import Indicators
+from utils.visualizer import Visualizer
+import matplotlib.pyplot as plt
 
 
 class SectorRotationStrategy(BaseStrategy):
@@ -172,26 +174,36 @@ class SectorRotationStrategy(BaseStrategy):
                         continue
 
                     try:
+                        # Flatten multi-index columns if present
+                        sector_df = data.copy()
+                        if isinstance(sector_df.columns, pd.MultiIndex):
+                            sector_df.columns = sector_df.columns.get_level_values(0)
+
+                        # Get Close series
+                        close_series = sector_df['Close']
+                        if isinstance(close_series, pd.DataFrame):
+                            close_series = close_series.iloc[:, 0]
+
                         # Calculate momentum
                         # Lookback period: momentum_period months + skip month
                         momentum_days = 21 * (self.momentum_period + self.momentum_skip_months)
                         skip_days = 21 * self.momentum_skip_months
 
-                        if len(data.loc[:date]) < momentum_days:
+                        if len(sector_df.loc[:date]) < momentum_days:
                             continue
 
                         # Get prices
-                        current_idx = data.index.get_loc(date)
+                        current_idx = sector_df.index.get_loc(date)
                         if current_idx < momentum_days:
                             continue
 
-                        price_current = data['Close'].iloc[current_idx - skip_days]
-                        price_past = data['Close'].iloc[current_idx - momentum_days]
+                        price_current = close_series.iloc[current_idx - skip_days]
+                        price_past = close_series.iloc[current_idx - momentum_days]
 
                         momentum = (price_current / price_past) - 1
 
                         # Calculate volatility
-                        returns = data['Close'].pct_change()
+                        returns = close_series.pct_change()
                         volatility = returns.loc[:date].iloc[-self.volatility_period:].std()
 
                         sector_scores[ticker] = {
@@ -285,3 +297,138 @@ class SectorRotationStrategy(BaseStrategy):
     def reset_state(self):
         """Reset strategy state (for backtesting purposes)."""
         self.clear_history()
+
+    def plot(self, sector_data: Dict[str, pd.DataFrame], market_data: pd.DataFrame, save_path: str = None):
+        """
+        Visualize sector rotation strategy indicators and signals.
+
+        Args:
+            sector_data: Dictionary of sector ETF DataFrames
+            market_data: Market index data (SPY)
+            save_path: Optional path to save the figure
+        """
+        # Generate signals
+        df = self.generate_signals(sector_data, market_data)
+
+        # Flatten market data
+        market_df = market_data.copy()
+        if isinstance(market_df.columns, pd.MultiIndex):
+            market_df.columns = market_df.columns.get_level_values(0)
+
+        close_series = market_df['Close']
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+
+        # Create figure with 3 subplots
+        fig, axes = Visualizer.create_figure(n_subplots=3, figsize=(15, 12))
+
+        # Subplot 1: Market filter (SPY vs 200-day SMA)
+        ax1 = axes[0]
+        sma_200 = Indicators.sma(close_series, self.market_filter_sma)
+
+        ax1.plot(market_df.index, close_series, label='SPY Price', color='blue', linewidth=1.5)
+        ax1.plot(market_df.index, sma_200, label='200-day SMA',
+                color='orange', linewidth=2, linestyle='--')
+
+        # Shade bull/bear periods
+        bull_mask = close_series > sma_200
+        ax1.fill_between(market_df.index, close_series.min(), close_series.max(),
+                        where=bull_mask, alpha=0.1, color='green', label='Bull Market')
+        bear_mask = close_series < sma_200
+        ax1.fill_between(market_df.index, close_series.min(), close_series.max(),
+                        where=bear_mask, alpha=0.1, color='red', label='Bear Market (CASH)')
+
+        ax1.set_title('Strategy 4 - Market Filter (SPY vs 200-day SMA)', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Price ($)', fontsize=12)
+        ax1.legend(loc='best', fontsize=10)
+        ax1.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax1)
+
+        # Subplot 2: Sector momentum comparison
+        ax2 = axes[1]
+
+        # Calculate 6-month momentum for each sector
+        for ticker, data in sector_data.items():
+            if data.empty:
+                continue
+
+            sector_df = data.copy()
+            if isinstance(sector_df.columns, pd.MultiIndex):
+                sector_df.columns = sector_df.columns.get_level_values(0)
+
+            close_s = sector_df['Close']
+            if isinstance(close_s, pd.DataFrame):
+                close_s = close_s.iloc[:, 0]
+
+            # Calculate 6-month momentum
+            momentum = Indicators.momentum(close_s, period=126) * 100
+
+            ax2.plot(sector_df.index, momentum, label=ticker, linewidth=1.2, alpha=0.7)
+
+        ax2.axhline(y=0, color='black', linestyle='-', linewidth=1)
+        ax2.set_title('Sector 6-Month Momentum Comparison', fontsize=14, fontweight='bold')
+        ax2.set_ylabel('Momentum (%)', fontsize=12)
+        ax2.legend(loc='best', fontsize=8, ncol=2)
+        ax2.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax2)
+
+        # Subplot 3: Selected sectors over time
+        ax3 = axes[2]
+
+        if not df.empty:
+            # Extract rebalance dates and selected sectors
+            rebalance_dates = []
+            selected_sectors_timeline = {}
+
+            for idx, row in df.iterrows():
+                if row['signal'] == 'HOLD_SECTORS':
+                    date = pd.to_datetime(row['date'])
+                    sectors = row['details']['sectors_list']
+                    rebalance_dates.append(date)
+                    selected_sectors_timeline[date] = sectors
+
+            # Plot selected sectors as timeline
+            all_sectors = list(sector_data.keys())
+            sector_colors = plt.cm.tab10(range(len(all_sectors)))
+            sector_to_color = {sector: color for sector, color in zip(all_sectors, sector_colors)}
+
+            # Create timeline visualization
+            for i, (date, sectors) in enumerate(selected_sectors_timeline.items()):
+                # Find next rebalance date
+                next_date = rebalance_dates[i+1] if i+1 < len(rebalance_dates) else market_df.index[-1]
+
+                # Draw horizontal bars for each selected sector
+                for j, sector in enumerate(sectors):
+                    ax3.barh(j, (next_date - date).days, left=date, height=0.8,
+                            color=sector_to_color.get(sector, 'gray'),
+                            alpha=0.6, label=sector if i == 0 else '')
+
+                # Mark rebalance date
+                if i > 0:  # Skip first date
+                    ax3.axvline(x=date, color='red', linestyle='--', alpha=0.5, linewidth=1)
+
+            ax3.set_title('Selected Sectors Timeline (Rebalancing)', fontsize=14, fontweight='bold')
+            ax3.set_ylabel('Sector Rank', fontsize=12)
+            ax3.set_xlabel('Date', fontsize=12)
+            ax3.set_yticks(range(self.top_n_sectors))
+            ax3.set_yticklabels([f'Top {i+1}' for i in range(self.top_n_sectors)])
+
+            # Create custom legend with unique sectors
+            handles = []
+            labels = []
+            seen_sectors = set()
+            for sector in all_sectors:
+                if sector not in seen_sectors:
+                    handles.append(plt.Rectangle((0,0),1,1, fc=sector_to_color[sector], alpha=0.6))
+                    labels.append(sector)
+                    seen_sectors.add(sector)
+
+            ax3.legend(handles, labels, loc='upper left', bbox_to_anchor=(1, 1),
+                      fontsize=9, ncol=1)
+            ax3.grid(True, alpha=0.3, axis='x')
+            Visualizer.format_date_axis(ax3)
+        else:
+            ax3.text(0.5, 0.5, 'No sector rotation data available',
+                    ha='center', va='center', fontsize=14, color='red')
+
+        Visualizer.save_or_show(fig, save_path)

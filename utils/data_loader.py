@@ -4,6 +4,7 @@ Data loader utility for fetching market data from various sources.
 
 import yfinance as yf
 import pandas as pd
+import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 import warnings
@@ -160,23 +161,91 @@ class DataLoader:
 
     def get_nyse_breadth_data(self) -> pd.DataFrame:
         """
-        Placeholder for NYSE breadth data.
+        Generate realistic mock NYSE breadth data based on SPY price movements.
 
         Note: NYSE breadth data (new lows, advance/decline ratios) is not available
         through yfinance and requires a separate data source (e.g., paid API or web scraping).
 
+        This method creates mock data that correlates with market movements for
+        demonstration purposes.
+
         Returns:
-            Empty DataFrame with expected columns
+            DataFrame with mock NYSE breadth data
         """
         print("WARNING: NYSE breadth data requires a separate data source.")
-        print("This method returns mock data for demonstration purposes.")
+        print("This method returns realistic mock data for demonstration purposes.")
 
-        # Create mock data structure
-        date_range = pd.date_range(start=self.start_date, end=self.end_date, freq='D')
-        mock_data = pd.DataFrame({
-            'NewLows_Ratio': 0.15,  # Mock value
-            'UpVolume_Ratio': 0.55,  # Mock value
-            'Advancing_Ratio': 0.52  # Mock value
-        }, index=date_range)
+        # Try to load SPY data to make mock data more realistic
+        try:
+            spy_data = self.load_market_index('SPY')
+
+            # Flatten multi-index if present
+            if isinstance(spy_data.columns, pd.MultiIndex):
+                spy_data.columns = spy_data.columns.get_level_values(0)
+
+            close_prices = spy_data['Close']
+            if isinstance(close_prices, pd.DataFrame):
+                close_prices = close_prices.iloc[:, 0]
+
+            # Calculate daily returns
+            returns = close_prices.pct_change()
+
+            # Calculate volatility
+            volatility = returns.rolling(window=20).std()
+
+            # Create mock NYSE breadth data that responds to market conditions
+            # NewLows_Ratio: Higher when market drops sharply
+            # Base value around 0.15, spikes to 0.50+ during selloffs
+            newlows_base = 0.15
+            newlows_ratio = newlows_base + np.maximum(0, -returns * 5) + volatility * 2
+            newlows_ratio = np.clip(newlows_ratio, 0.05, 0.70)
+
+            # UpVolume_Ratio: Lower during selloffs, higher during rallies
+            # Base value around 0.55, drops to 0.30 during selloffs
+            upvolume_base = 0.55
+            upvolume_ratio = upvolume_base + returns * 2 - volatility
+            upvolume_ratio = np.clip(upvolume_ratio, 0.25, 0.75)
+
+            # Advancing_Ratio: Similar to UpVolume but slightly different pattern
+            # Base value around 0.52
+            advancing_base = 0.52
+            advancing_ratio = advancing_base + returns * 2.5 - volatility * 0.5
+            advancing_ratio = np.clip(advancing_ratio, 0.20, 0.80)
+
+            # Add some noise for realism
+            np.random.seed(42)
+            noise_nl = np.random.normal(0, 0.02, len(newlows_ratio))
+            noise_uv = np.random.normal(0, 0.03, len(upvolume_ratio))
+            noise_ad = np.random.normal(0, 0.03, len(advancing_ratio))
+
+            newlows_ratio += noise_nl
+            upvolume_ratio += noise_uv
+            advancing_ratio += noise_ad
+
+            # Clip again after adding noise
+            newlows_ratio = np.clip(newlows_ratio, 0.05, 0.70)
+            upvolume_ratio = np.clip(upvolume_ratio, 0.25, 0.75)
+            advancing_ratio = np.clip(advancing_ratio, 0.20, 0.80)
+
+            mock_data = pd.DataFrame({
+                'NewLows_Ratio': newlows_ratio,
+                'UpVolume_Ratio': upvolume_ratio,
+                'Advancing_Ratio': advancing_ratio
+            }, index=spy_data.index)
+
+        except Exception as e:
+            # Fallback to simple mock data if SPY loading fails
+            print(f"Could not load SPY data for realistic mock: {e}")
+            date_range = pd.date_range(start=self.start_date, end=self.end_date, freq='D')
+
+            # Generate random but realistic-looking data
+            np.random.seed(42)
+            n_days = len(date_range)
+
+            mock_data = pd.DataFrame({
+                'NewLows_Ratio': np.clip(np.random.normal(0.15, 0.10, n_days), 0.05, 0.70),
+                'UpVolume_Ratio': np.clip(np.random.normal(0.55, 0.08, n_days), 0.25, 0.75),
+                'Advancing_Ratio': np.clip(np.random.normal(0.52, 0.08, n_days), 0.20, 0.80)
+            }, index=date_range)
 
         return mock_data

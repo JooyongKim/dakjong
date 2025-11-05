@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 
 from .base_strategy import BaseStrategy
 from utils.data_loader import DataLoader
+from utils.visualizer import Visualizer
+import matplotlib.pyplot as plt
 
 
 class PanicBuyStrategy(BaseStrategy):
@@ -206,3 +208,114 @@ class PanicBuyStrategy(BaseStrategy):
         """Reset strategy state (for backtesting purposes)."""
         self.pending_signals = []
         self.clear_history()
+
+    def plot(self, nyse_breadth_data: pd.DataFrame, market_data: pd.DataFrame, save_path: str = None):
+        """
+        Visualize strategy indicators and signals.
+
+        Args:
+            nyse_breadth_data: NYSE breadth data
+            market_data: Market data (SPY)
+            save_path: Optional path to save the figure
+        """
+        # Generate signals
+        df = self.generate_signals(nyse_breadth_data, market_data)
+
+        # Flatten multi-index if present
+        market_df = market_data.copy()
+        if isinstance(market_df.columns, pd.MultiIndex):
+            market_df.columns = market_df.columns.get_level_values(0)
+
+        close_series = market_df['Close']
+        if isinstance(close_series, pd.DataFrame):
+            close_series = close_series.iloc[:, 0]
+
+        # Create figure with 4 subplots
+        fig, axes = Visualizer.create_figure(n_subplots=4, figsize=(15, 14))
+
+        # Subplot 1: Market Price
+        ax1 = axes[0]
+        ax1.plot(market_df.index, close_series, label=f'{self.target_asset} Price',
+                color='blue', linewidth=1.5)
+
+        # Mark BUY signals
+        buy_signals = df[df['Signal'] == 'BUY']
+        if not buy_signals.empty:
+            for date in buy_signals.index:
+                if date in close_series.index:
+                    price = close_series.loc[date]
+                    ax1.plot(date, price, '^', color='green', markersize=15,
+                            label='BUY Signal' if date == buy_signals.index[0] else '', zorder=5)
+                    ax1.axvline(x=date, color='green', linestyle='--', alpha=0.3, linewidth=1)
+
+        ax1.set_title(f'Strategy 1 - Market Panic Buy Signals', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Price ($)', fontsize=12)
+        ax1.legend(loc='best', fontsize=10)
+        ax1.grid(True, alpha=0.3)
+        Visualizer.format_date_axis(ax1)
+
+        # Subplot 2: NYSE New Lows Ratio
+        ax2 = axes[1]
+        if 'NL_MA' in df.columns:
+            ax2.plot(df.index, df['NL_MA'], label=f'New Lows {self.nl_ma_period}D MA',
+                    color='red', linewidth=1.5)
+            ax2.axhline(y=self.nl_threshold, color='darkred', linestyle='--',
+                       linewidth=2, label=f'Threshold ({self.nl_threshold})')
+
+            # Mark when threshold is breached
+            breach_mask = df['NL_MA'] > self.nl_threshold
+            ax2.fill_between(df.index, 0, df['NL_MA'], where=breach_mask,
+                            alpha=0.3, color='red', label='Panic Level')
+
+            ax2.set_title('NYSE New Lows Ratio (Panic Indicator)', fontsize=14, fontweight='bold')
+            ax2.set_ylabel('New Lows Ratio', fontsize=12)
+            ax2.legend(loc='best', fontsize=10)
+            ax2.grid(True, alpha=0.3)
+            Visualizer.format_date_axis(ax2)
+        else:
+            ax2.text(0.5, 0.5, 'NYSE Breadth Data Not Available\n(Using Mock Data)',
+                    ha='center', va='center', fontsize=14, color='red')
+            ax2.set_title('NYSE New Lows Ratio', fontsize=14, fontweight='bold')
+
+        # Subplot 3: STCO (Short-Term Cumulative Oscillator)
+        ax3 = axes[2]
+        if 'STCO' in df.columns:
+            ax3.plot(df.index, df['STCO'], label='STCO',
+                    color='purple', linewidth=1.5)
+            ax3.axhline(y=self.stco_threshold, color='darkred', linestyle='--',
+                       linewidth=2, label=f'Threshold ({self.stco_threshold})')
+
+            # Mark when threshold is breached
+            breach_mask = df['STCO'] > self.stco_threshold
+            ax3.fill_between(df.index, 0, df['STCO'], where=breach_mask,
+                            alpha=0.3, color='purple', label='Oversold')
+
+            ax3.set_title('STCO - Short-Term Cumulative Oscillator', fontsize=14, fontweight='bold')
+            ax3.set_ylabel('STCO Value', fontsize=12)
+            ax3.legend(loc='best', fontsize=10)
+            ax3.grid(True, alpha=0.3)
+            Visualizer.format_date_axis(ax3)
+
+        # Subplot 4: Panic Conditions Summary
+        ax4 = axes[3]
+        if 'Panic_Condition' in df.columns:
+            panic_values = df['Panic_Condition'].astype(int)
+            ax4.fill_between(df.index, 0, panic_values, where=(panic_values > 0),
+                            step='post', alpha=0.4, color='orange', label='Panic Condition Met')
+
+            # Mark confirmed BUY signals
+            if not buy_signals.empty:
+                for date in buy_signals.index:
+                    if date in df.index:
+                        ax4.axvline(x=date, color='green', linestyle='-',
+                                   linewidth=2, alpha=0.7)
+
+            ax4.set_title('Panic Condition Timeline', fontsize=14, fontweight='bold')
+            ax4.set_ylabel('Condition Met', fontsize=12)
+            ax4.set_xlabel('Date', fontsize=12)
+            ax4.set_ylim(-0.1, 1.5)
+            ax4.legend(loc='best', fontsize=10)
+            ax4.grid(True, alpha=0.3)
+            Visualizer.format_date_axis(ax4)
+
+        Visualizer.save_or_show(fig, save_path)
