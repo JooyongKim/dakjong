@@ -151,11 +151,27 @@ class MACDVStrategy(BaseStrategy):
                 if data.empty:
                     continue
 
+                # Flatten multi-index columns if present
+                data_copy = data.copy()
+                if isinstance(data_copy.columns, pd.MultiIndex):
+                    data_copy.columns = data_copy.columns.get_level_values(0)
+
+                # Extract series
+                high_series = data_copy['High']
+                if isinstance(high_series, pd.DataFrame):
+                    high_series = high_series.iloc[:, 0]
+                low_series = data_copy['Low']
+                if isinstance(low_series, pd.DataFrame):
+                    low_series = low_series.iloc[:, 0]
+                close_series = data_copy['Close']
+                if isinstance(close_series, pd.DataFrame):
+                    close_series = close_series.iloc[:, 0]
+
                 # Calculate MACD-V
                 macd_v = Indicators.macd_v(
-                    high=data['High'],
-                    low=data['Low'],
-                    close=data['Close'],
+                    high=high_series,
+                    low=low_series,
+                    close=close_series,
                     ema_short=self.ema_short,
                     ema_long=self.ema_long,
                     atr_period=self.atr_period
@@ -169,11 +185,18 @@ class MACDVStrategy(BaseStrategy):
 
             # Calculate SPY market regime
             spy_df = asset_data['SPY'].copy()
-            spy_df['SMA_200'] = Indicators.sma(spy_df['Close'], self.market_filter_sma)
-            spy_df['Market_Regime'] = spy_df.apply(
-                lambda row: 'Bull' if row['Close'] > row['SMA_200'] else 'Bear',
-                axis=1
-            )
+
+            # Flatten multi-index columns if present
+            if isinstance(spy_df.columns, pd.MultiIndex):
+                spy_df.columns = spy_df.columns.get_level_values(0)
+
+            close_series = spy_df['Close']
+            if isinstance(close_series, pd.DataFrame):
+                close_series = close_series.iloc[:, 0]
+
+            spy_df['SMA_200'] = Indicators.sma(close_series, self.market_filter_sma)
+            spy_df['Market_Regime'] = 'Bear'
+            spy_df.loc[close_series > spy_df['SMA_200'], 'Market_Regime'] = 'Bull'
 
             # Generate signals based on SPY
             spy_macd_v = macd_v_results['SPY']

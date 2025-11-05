@@ -113,7 +113,15 @@ class SectorRotationStrategy(BaseStrategy):
 
             # Calculate market filter (200-day SMA)
             market_df = market_data.copy()
-            market_df['SMA_200'] = Indicators.sma(market_df['Close'], self.market_filter_sma)
+
+            # Flatten multi-index columns if present
+            if isinstance(market_df.columns, pd.MultiIndex):
+                market_df.columns = market_df.columns.get_level_values(0)
+
+            close_series = market_df['Close']
+            if isinstance(close_series, pd.DataFrame):
+                close_series = close_series.iloc[:, 0]
+            market_df['SMA_200'] = Indicators.sma(close_series, self.market_filter_sma)
 
             # Get common date range
             all_dates = market_df.index
@@ -133,7 +141,11 @@ class SectorRotationStrategy(BaseStrategy):
 
                 # Check market filter
                 market_price = market_df.loc[date, 'Close']
+                if isinstance(market_price, pd.Series):
+                    market_price = market_price.iloc[0]
                 market_sma = market_df.loc[date, 'SMA_200']
+                if isinstance(market_sma, pd.Series):
+                    market_sma = market_sma.iloc[0]
 
                 if market_price < market_sma:
                     # Bear market - go to cash

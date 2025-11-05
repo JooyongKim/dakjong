@@ -66,12 +66,19 @@ class LeverageStrategy(BaseStrategy):
 
             df = market_data.copy()
 
+            # Flatten multi-index columns if present
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
             # Calculate 200-day SMA
-            df['SMA_200'] = Indicators.sma(df['Close'], self.sma_period)
+            close_series = df['Close']
+            if isinstance(close_series, pd.DataFrame):
+                close_series = close_series.iloc[:, 0]
+            df['SMA_200'] = Indicators.sma(close_series, self.sma_period)
 
             # Generate signals
             df['Signal'] = 'LEVERAGE_OFF'
-            df['Price_vs_SMA'] = df['Close'] - df['SMA_200']
+            df['Price_vs_SMA'] = close_series - df['SMA_200']
             df['Trend'] = 'Bear'
 
             signals_list = []

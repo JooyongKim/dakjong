@@ -90,14 +90,27 @@ class RiskManagementStrategy(BaseStrategy):
             # Prepare market data
             df = market_data.copy()
 
+            # Flatten multi-index columns if present
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+
             # Calculate VIX standard deviation
-            vix_std = vix_data['Close'].rolling(window=self.vix_std_period).std()
+            vix_close = vix_data['Close']
+            if isinstance(vix_close, pd.DataFrame):
+                vix_close = vix_close.iloc[:, 0]
+            vix_std = vix_close.rolling(window=self.vix_std_period).std()
 
             # Calculate 52-week high
-            df['High_52W'] = df['High'].rolling(window=252).max()
+            high_series = df['High']
+            if isinstance(high_series, pd.DataFrame):
+                high_series = high_series.iloc[:, 0]
+            df['High_52W'] = high_series.rolling(window=252).max()
 
             # Calculate percentage drop from 52-week high
-            df['Pct_Drop'] = (df['Close'] - df['High_52W']) / df['High_52W']
+            close_series = df['Close']
+            if isinstance(close_series, pd.DataFrame):
+                close_series = close_series.iloc[:, 0]
+            df['Pct_Drop'] = (close_series - df['High_52W']) / df['High_52W']
 
             # Calculate days to reach 5% drop
             df['Days_To_Drop'] = 0
